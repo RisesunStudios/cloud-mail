@@ -41,6 +41,16 @@
           </el-input>
           <el-input v-model="form.password" :placeholder="$t('password')" type="password" autocomplete="off">
           </el-input>
+          <div v-show="loginVerifyShow"
+               class="register-turnstile"
+               :data-sitekey="settingStore.settings.siteKey"
+               data-callback="onTurnstileSuccess"
+               data-error-callback="onTurnstileError"
+               data-after-interactive-callback="loadAfter"
+               data-before-interactive-callback="loadBefore"
+          >
+            <span style="font-size: 12px;color: #F56C6C" v-if="botJsError">{{ $t('verifyModuleFailed') }}</span>
+          </div>
           <el-button class="btn" type="primary" @click="submit" :loading="loginLoading"
           >{{ $t('loginBtn') }}
           </el-button>
@@ -198,6 +208,7 @@ const domainList = settingStore.domainList;
 const registerLoading = ref(false)
 suffix.value = domainList[0]
 const verifyShow = ref(false)
+const loginVerifyShow = ref(false)
 let verifyToken = ''
 let turnstileId = null
 let botJsError = ref(false)
@@ -403,9 +414,29 @@ const submit = () => {
     return
   }
 
+  if (!verifyToken && loginVerifyShow.value) {
+    if (!botJsError.value) {
+      ElMessage({
+        message: t('botVerifyMsg'),
+        type: "error",
+        plain: true
+      })
+    }
+    loginLoading.value = false
+    return
+  }
+
   loginLoading.value = true
-  login(email, form.password).then(async data => {
+  login(email, form.password, verifyToken).then(async data => {
     await saveToken(data.token)
+  }).catch(res => {
+    verifyToken = ''
+    if (turnstileId) {
+      window.turnstile.reset(turnstileId)
+    }
+    if (res.code === 400) {
+      refreshWebsiteConfig()
+    }
   }).finally(() => {
     loginLoading.value = false
   })
@@ -436,6 +467,23 @@ function refreshWebsiteConfig() {
       suffix.value = setting.domainList[0]
     }
     document.title = setting.title
+    const loginVerify = setting.loginVerify
+    const loginVerifyOpen = setting.loginVerifyOpen
+    loginVerifyShow.value = loginVerify === 0 || (loginVerify === 2 && loginVerifyOpen)
+    if (loginVerifyShow.value) {
+      nextTick(() => {
+        if (!turnstileId) {
+          try {
+            turnstileId = window.turnstile.render('.register-turnstile')
+          } catch (e) {
+            botJsError.value = true
+            console.log('人机验证js加载失败')
+          }
+        } else {
+          window.turnstile.reset(turnstileId)
+        }
+      })
+    }
   }).catch(e => {
     console.error(e)
   })
